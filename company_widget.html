@@ -16,6 +16,27 @@
       background: #f8f9fa;
       color: #1a1a1a;
       line-height: 1.5;
+      max-height: 600px;
+      overflow-y: auto;
+    }
+
+    /* Custom scrollbar */
+    body::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    body::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 4px;
+    }
+
+    body::-webkit-scrollbar-thumb {
+      background: #c1c1c1;
+      border-radius: 4px;
+    }
+
+    body::-webkit-scrollbar-thumb:hover {
+      background: #a1a1a1;
     }
 
     #app {
