@@ -1,10 +1,11 @@
 """
 TaskPilot MCP Server
 A minimal MCP server for ChatGPT Apps demonstrating task management with interactive UI.
+Includes a Crunchbase-style startup database with company information.
 """
 
 from __future__ import annotations
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 from pathlib import Path
 import json
@@ -17,12 +18,29 @@ from starlette.middleware.cors import CORSMiddleware
 # Initialize FastMCP server
 mcp = FastMCP(name="taskpilot")
 
-# JSON file for persistent storage
+# JSON files for persistent storage
 TASKS_FILE = Path("tasks.json")
+COMPANIES_FILE = Path("companies.json")
 
 # In-memory task storage
 tasks: List[Dict[str, Any]] = []
 task_id_counter = 1
+
+# In-memory company storage
+companies_data: Dict[str, Any] = {"companies": [], "industries": [], "funding_stages": []}
+
+
+def load_companies() -> None:
+    """Load companies from JSON file"""
+    global companies_data
+
+    if COMPANIES_FILE.exists():
+        try:
+            with open(COMPANIES_FILE, 'r') as f:
+                companies_data = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"Error loading companies: {e}")
+            companies_data = {"companies": [], "industries": [], "funding_stages": []}
 
 
 def load_tasks() -> None:
@@ -56,8 +74,9 @@ def save_tasks() -> None:
         print(f"Error saving tasks: {e}")
 
 
-# Load tasks on startup
+# Load data on startup
 load_tasks()
+load_companies()
 
 
 @mcp.tool()
@@ -241,6 +260,230 @@ def delete_task(task_id: int) -> ToolResult:
             "task_id": task_id
         }
     )
+
+
+# =============================================================================
+# COMPANY DATABASE TOOLS
+# =============================================================================
+
+def format_currency(amount: int) -> str:
+    """Format currency in human-readable form (e.g., $45M, $3.2M)"""
+    if amount >= 1_000_000_000:
+        return f"${amount / 1_000_000_000:.1f}B"
+    elif amount >= 1_000_000:
+        return f"${amount / 1_000_000:.0f}M" if amount % 1_000_000 == 0 else f"${amount / 1_000_000:.1f}M"
+    elif amount >= 1_000:
+        return f"${amount / 1_000:.0f}K"
+    return f"${amount}"
+
+
+def format_funding_history(history: List[str]) -> str:
+    """Format funding history as arrow-separated string"""
+    return " → ".join(history)
+
+
+@mcp.tool()
+def list_companies(
+    industry: Optional[str] = None,
+    funding_stage: Optional[str] = None,
+    hq: Optional[str] = None,
+    year: Optional[int] = None,
+    search: Optional[str] = None
+) -> ToolResult:
+    """
+    List all startup companies with optional filtering.
+
+    Args:
+        industry: Filter by industry (e.g., "Biotechnology", "AI/ML", "Fintech")
+        funding_stage: Filter by last funding stage (e.g., "Seed", "Series A", "Series B")
+        hq: Filter by headquarters location
+        year: Filter by year founded
+        search: Search by company name or tagline
+
+    Returns:
+        List of companies matching the filters with widget for display
+    """
+    companies = companies_data.get("companies", [])
+
+    # Apply filters
+    if industry:
+        companies = [c for c in companies if c.get("industry", "").lower() == industry.lower()]
+
+    if funding_stage:
+        companies = [c for c in companies if c.get("last_round", "").lower() == funding_stage.lower()]
+
+    if hq:
+        companies = [c for c in companies if hq.lower() in c.get("hq", "").lower()]
+
+    if year:
+        companies = [c for c in companies if c.get("year_founded") == year]
+
+    if search:
+        search_lower = search.lower()
+        companies = [c for c in companies if
+                    search_lower in c.get("name", "").lower() or
+                    search_lower in c.get("tagline", "").lower() or
+                    search_lower in c.get("description", "").lower()]
+
+    # Build summary message
+    if len(companies) == 0:
+        message = "No companies found matching the criteria."
+    else:
+        message = f"Found {len(companies)} startup(s)"
+        if industry:
+            message += f" in {industry}"
+        if funding_stage:
+            message += f" at {funding_stage} stage"
+
+    return ToolResult(
+        content=[TextContent(
+            type="text",
+            text=message
+        )],
+        structured_content={
+            "companies": companies,
+            "total": len(companies),
+            "industries": companies_data.get("industries", []),
+            "funding_stages": companies_data.get("funding_stages", [])
+        },
+        meta={
+            "operation": "list_companies",
+            "widget": "ui://companydb/widget.html"
+        }
+    )
+
+
+@mcp.tool()
+def get_company(company_id: int) -> ToolResult:
+    """
+    Get detailed information for a specific company.
+
+    Args:
+        company_id: The unique ID of the company
+
+    Returns:
+        Full company details including description and funding info
+    """
+    companies = companies_data.get("companies", [])
+    company = next((c for c in companies if c.get("id") == company_id), None)
+
+    if not company:
+        return ToolResult(
+            content=[TextContent(
+                type="text",
+                text=f"Error: Company with ID {company_id} not found"
+            )],
+            structured_content={
+                "error": "Company not found",
+                "company_id": company_id
+            },
+            meta={
+                "operation": "get_company",
+                "success": False
+            }
+        )
+
+    # Format for display
+    funding_str = format_funding_history(company.get("funding_history", []))
+    round_size = format_currency(company.get("last_round_size", 0))
+    valuation = format_currency(company.get("valuation", 0))
+
+    message = f"""
+{company['name']} - {company.get('tagline', '')}
+
+Location: {company.get('hq', 'Unknown')}
+Founded: {company.get('year_founded', 'Unknown')}
+Industry: {company.get('industry', 'Unknown')}
+Employees: {company.get('employees', 'Unknown')}
+
+{company.get('description', '')}
+
+Funding History: {funding_str}
+Last Round: {company.get('last_round', 'Unknown')} ({round_size})
+Valuation: {valuation}
+"""
+
+    return ToolResult(
+        content=[TextContent(
+            type="text",
+            text=message.strip()
+        )],
+        structured_content={
+            "company": company,
+            "formatted": {
+                "funding_history": funding_str,
+                "last_round_size": round_size,
+                "valuation": valuation
+            }
+        },
+        meta={
+            "operation": "get_company",
+            "success": True,
+            "company_id": company_id
+        }
+    )
+
+
+@mcp.tool()
+def search_companies(query: str) -> ToolResult:
+    """
+    Search companies by name, tagline, or description.
+
+    Args:
+        query: Search query string
+
+    Returns:
+        List of companies matching the search query
+    """
+    companies = companies_data.get("companies", [])
+    query_lower = query.lower()
+
+    matching = [c for c in companies if
+                query_lower in c.get("name", "").lower() or
+                query_lower in c.get("tagline", "").lower() or
+                query_lower in c.get("description", "").lower() or
+                query_lower in c.get("industry", "").lower()]
+
+    if len(matching) == 0:
+        message = f"No companies found matching '{query}'"
+    else:
+        message = f"Found {len(matching)} company(ies) matching '{query}'"
+
+    return ToolResult(
+        content=[TextContent(
+            type="text",
+            text=message
+        )],
+        structured_content={
+            "companies": matching,
+            "total": len(matching),
+            "query": query,
+            "industries": companies_data.get("industries", []),
+            "funding_stages": companies_data.get("funding_stages", [])
+        },
+        meta={
+            "operation": "search_companies",
+            "widget": "ui://companydb/widget.html"
+        }
+    )
+
+
+# =============================================================================
+# WIDGET RESOURCES
+# =============================================================================
+
+@mcp.resource(
+    uri="ui://companydb/widget.html",
+    mime_type="text/html+skybridge",
+    name="Company Database Widget"
+)
+def company_widget() -> str:
+    """Serve the company database widget HTML"""
+    widget_path = Path("company_widget.html")
+    if widget_path.exists():
+        with open(widget_path, "r") as f:
+            return f.read()
+    return "<html><body>Widget not found</body></html>"
 
 
 # Create HTTP app with CORS support
