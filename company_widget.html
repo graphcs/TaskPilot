@@ -746,32 +746,102 @@
 
     backBtn.addEventListener('click', showListView);
 
-    // Initialize
-    function init() {
-      // Get data from ChatGPT Apps SDK
-      if (window.openai && window.openai.toolOutput) {
-        const data = window.openai.toolOutput;
+    // Track if we've already initialized
+    let initialized = false;
+
+    // Initialize with data
+    function initWithData(data) {
+      if (initialized) {
+        console.log('Already initialized, skipping');
+        return;
+      }
+      initialized = true;
+
+      if (data) {
         companies = data.companies || [];
         industries = data.industries || [];
-        fundingStages = data.funding_stages || [];
+        fundingStages = data.funding_stages || data.fundingStages || [];
       }
+
+      console.log('Initializing with companies:', companies.length);
 
       filteredCompanies = [...companies];
       populateFilters();
       renderList();
 
       // Restore state if navigating back
-      if (window.openai && window.openai.widgetState && window.openai.widgetState.selectedCompanyId) {
+      if (window.openai?.widgetState?.selectedCompanyId) {
         showCompanyDetail(window.openai.widgetState.selectedCompanyId);
       }
     }
 
-    // Wait for data to be available
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', init);
-    } else {
-      init();
+    // Load data using callTool as workaround for toolOutput being null
+    async function loadData() {
+      console.log('loadData() called');
+
+      // First check if toolOutput is already available
+      if (window.openai?.toolOutput?.companies) {
+        console.log('toolOutput already has companies, using it');
+        initWithData(window.openai.toolOutput);
+        return;
+      }
+
+      // Check if callTool is available
+      if (!window.openai?.callTool) {
+        console.log('callTool not available, waiting...');
+        // Wait a bit for openai to be ready
+        setTimeout(loadData, 100);
+        return;
+      }
+
+      // Call the tool directly to fetch data
+      try {
+        console.log('Calling list_companies via callTool...');
+        const result = await window.openai.callTool('list_companies', {});
+        console.log('callTool result:', result);
+
+        // Handle different response formats
+        if (result?.structuredContent) {
+          console.log('Found structuredContent');
+          initWithData(result.structuredContent);
+        } else if (result?.companies) {
+          console.log('Found companies directly in result');
+          initWithData(result);
+        } else if (typeof result === 'string') {
+          // Try parsing JSON if result is a string
+          try {
+            const parsed = JSON.parse(result);
+            if (parsed.companies) {
+              initWithData(parsed);
+            } else {
+              console.log('Parsed result has no companies:', parsed);
+              initWithData(null);
+            }
+          } catch (e) {
+            console.log('Result is not parseable JSON:', result);
+            initWithData(null);
+          }
+        } else {
+          console.log('Unexpected result format:', result);
+          initWithData(null);
+        }
+      } catch (error) {
+        console.error('Error calling list_companies:', error);
+        initWithData(null);
+      }
     }
+
+    // Listen for openai:set_globals event (backup approach)
+    window.addEventListener("openai:set_globals", () => {
+      console.log("openai:set_globals event fired!");
+      if (!initialized && window.openai?.toolOutput?.companies) {
+        console.log('Got toolOutput from set_globals event');
+        initWithData(window.openai.toolOutput);
+      }
+    });
+
+    // Start loading data
+    loadData();
   </script>
 </body>
 </html>

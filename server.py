@@ -282,7 +282,13 @@ def format_funding_history(history: List[str]) -> str:
     return " → ".join(history)
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={
+        "openai/outputTemplate": "ui://companydb/widget.html",
+        "openai/widgetAccessible": True,
+        "openai/resultCanProduceWidget": True
+    }
+)
 def list_companies(
     industry: Optional[str] = None,
     funding_stage: Optional[str] = None,
@@ -348,7 +354,7 @@ def list_companies(
         },
         meta={
             "operation": "list_companies",
-            "widget": "ui://companydb/widget.html"
+            "openai/outputTemplate": "ui://companydb/widget.html"
         }
     )
 
@@ -424,7 +430,13 @@ Valuation: {valuation}
     )
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={
+        "openai/outputTemplate": "ui://companydb/widget.html",
+        "openai/widgetAccessible": True,
+        "openai/resultCanProduceWidget": True
+    }
+)
 def search_companies(query: str) -> ToolResult:
     """
     Search companies by name, tagline, or description.
@@ -463,7 +475,7 @@ def search_companies(query: str) -> ToolResult:
         },
         meta={
             "operation": "search_companies",
-            "widget": "ui://companydb/widget.html"
+            "openai/outputTemplate": "ui://companydb/widget.html"
         }
     )
 
